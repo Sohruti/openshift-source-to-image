@@ -389,3 +389,140 @@ exec node /opt/app-root/src/bin/www
 - [S2I GitHub Repository](https://github.com/openshift/source-to-image)
 - [Node.js S2I Builder Image](https://catalog.redhat.com/software/containers/ubi8/nodejs-20)
 - [OpenShift Templates](https://docs.openshift.com/container-platform/latest/openshift_images/templates.html)
+
+---
+
+## How the Code Works (Step by Step)
+
+### Entry Point — `bin/www`
+
+```
+bin/www  →  loads app.js  →  creates HTTP server  →  listens on PORT (default 8080)
+```
+
+- `npm start` runs `node .` which uses `package.json`'s `"main": "./bin/www"`
+- `normalizePort()` reads `process.env.PORT` or defaults to `8080`
+- Creates a raw `http.Server` wrapping the Express app
+- Handles errors like port already in use (`EADDRINUSE`)
+
+### Express App Setup — `app.js`
+
+This wires everything together:
+
+```
+app.js
+  ├── bodyParser.json()          ← parses JSON request bodies
+  ├── bodyParser.urlencoded()    ← parses form data
+  ├── express.static('public')   ← serves index.html at /
+  ├── /api → routes/fruits.js    ← all CRUD routes
+  ├── /ready → 200               ← Kubernetes readiness probe
+  ├── /live → 200                ← Kubernetes liveness probe
+  └── db.init()                  ← creates tables + seed data
+```
+
+The error handler on line 34 catches malformed JSON and returns `415 Unsupported Media Type`.
+
+### Database — `lib/db/index.js`
+
+```
+lib/db/index.js
+  ├── Reads env vars for DB connection (or uses kube-service-bindings on OpenShift)
+  ├── Creates a PostgreSQL connection pool
+  ├── init() → CREATE TABLE IF NOT EXISTS products + INSERT seed data
+  ├── didInitHappen() → SELECT * FROM products (checks if table exists)
+  └── query() → checks init, then runs your SQL
+```
+
+**The `products` table:**
+```sql
+id    SERIAL PRIMARY KEY
+name  VARCHAR(40) NOT NULL
+stock BIGINT
+```
+
+**Flow of every request:**
+1. `query()` is called
+2. It checks if the table exists (`didInitHappen`)
+3. If not, runs `init()` to create it
+4. Then runs your actual SQL
+
+### API Functions — `lib/api/fruits.js`
+
+Pure SQL wrappers, no Express logic:
+
+| Function | SQL | Purpose |
+|----------|-----|---------|
+| `find(id)` | `SELECT * FROM products WHERE id = $1` | Get one fruit |
+| `findAll()` | `SELECT * FROM products` | Get all fruits |
+| `create(name, stock)` | `INSERT INTO products ... RETURNING *` | Add a fruit |
+| `update({name, stock, id})` | `UPDATE products SET ... WHERE id = $3` | Edit a fruit |
+| `remove(id)` | `DELETE FROM products WHERE id = $1` | Delete a fruit |
+
+### Routes — `lib/routes/fruits.js`
+
+Maps HTTP methods to API functions:
+
+```
+GET    /api/fruits      → findAll()   → returns JSON array
+GET    /api/fruits/:id  → find(id)    → returns JSON object or 404
+POST   /api/fruits      → create()    → returns 201 + new fruit
+PUT    /api/fruits/:id  → update()    → returns 204 (no content)
+DELETE /api/fruits/:id  → remove()    → returns 204 (no content)
+```
+
+**Middleware chain for POST/PUT:**
+```
+Request → validateCreateUpdateRequest() → route handler → db query → response
+```
+
+### Validation — `lib/validations/index.js`
+
+Checks before any create/update:
+1. Body is not empty → else `415`
+2. `name` is provided → else `422`
+3. `stock` is a non-negative number → else `422`
+4. If `id` is in body, it must match the URL param → else `422`
+
+### Frontend — `public/index.html`
+
+A **Vue.js 2** single-page app served by Express:
+
+```
+Browser loads index.html
+  → Vue mounts on #app
+  → mounted() calls _refreshPageData()
+  → GET /api/fruits populates the table
+  → User fills form → clicks Save
+  → update() decides POST (new) or PUT (edit)
+  → fetch() sends JSON to API
+  → _success() refreshes the table + clears form
+```
+
+**Form logic:**
+- `form.id == -1` → it's a new fruit → `POST /api/fruits`
+- `form.id != -1` → editing existing → `PUT /api/fruits/:id`
+- Edit button sets `form.id` to the fruit's ID
+- Remove button calls `DELETE /api/fruits/:id`
+
+### Request Flow (Full Picture)
+
+```
+Browser (Vue)
+    │
+    ▼
+Express (app.js)
+    │
+    ├── static middleware → serves public/index.html
+    │
+    ├── /api/fruits (routes/fruits.js)
+    │       │
+    │       ├── validation middleware
+    │       │
+    │       └── lib/api/fruits.js
+    │               │
+    │               └── lib/db/index.js
+    │                       │
+    │                       └── PostgreSQL pool.query()
+    │
+    └── /ready, /live → health checks
+```
