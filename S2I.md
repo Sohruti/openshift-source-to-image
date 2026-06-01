@@ -291,14 +291,23 @@ source2image/
 
 ---
 
-## Quick Start (Local Development)
+## Quick Start — Run Locally
+
+### Prerequisites
+- Node.js 18+
+- Docker (for PostgreSQL)
+
+### Steps
 
 ```bash
-# 1. Install dependencies
-cd nodejs-ex
+# 1. Clone the repo
+git clone https://github.com/Sohruti/openshift-source-to-image.git
+cd openshift-source-to-image/nodejs-ex
+
+# 2. Install dependencies
 npm install
 
-# 2. Start PostgreSQL (Docker)
+# 3. Start PostgreSQL (Docker)
 docker run --name os-postgres-db \
   -e POSTGRESQL_USER=luke \
   -e POSTGRESQL_PASSWORD=secret \
@@ -306,33 +315,86 @@ docker run --name os-postgres-db \
   -d -p 5432:5432 \
   centos/postgresql-10-centos7
 
-# 3. Run the application
-DB_USERNAME=luke DB_PASSWORD=secret ./bin/www
+# 4. Run the app
+# Windows (PowerShell):
+$env:DB_USERNAME="luke"; $env:DB_PASSWORD="secret"; npm start
 
-# 4. Open in browser
+# Linux/Mac:
+DB_USERNAME=luke DB_PASSWORD=secret npm start
+
+# 5. Open in browser
 # http://localhost:8080
+```
+
+### Other Local Commands
+
+```bash
+npm run dev            # Start with pretty logs
+npm run dev:debug      # Start with debug output
+npm test               # Run unit tests
 ```
 
 ---
 
-## Quick Start (OpenShift)
+## Quick Start — Deploy on OpenShift
+
+### Prerequisites
+- `oc` CLI installed
+- OpenShift cluster access
+
+### Steps
 
 ```bash
 # 1. Login to OpenShift
-oc login -u developer
+oc login -u developer -p developer https://api.your-cluster:6443
 
 # 2. Create a new project
 oc new-project my-s2i-app
 
-# 3. Deploy using S2I
-oc new-app nodejs:22-ubi9~https://github.com/your-username/source2image.git \
+# 3. Deploy using S2I (no Dockerfile needed)
+oc new-app nodejs:22-ubi9~https://github.com/Sohruti/openshift-source-to-image.git \
   --context-dir=nodejs-ex
 
-# 4. Expose the route
+# 4. Watch the build progress
+oc logs -f bc/source2image
+
+# 5. Expose the route
 oc expose svc/source2image
 
-# 5. Get the URL
+# 6. Get the URL
 oc get route
+```
+
+### Deploy with PostgreSQL
+
+```bash
+# Deploy app + ephemeral PostgreSQL
+oc create -f nodejs-ex/openshift/templates/nodejs-postgresql.json
+oc new-app nodejs-example \
+  -p SOURCE_REPOSITORY_URL=https://github.com/Sohruti/openshift-source-to-image.git
+
+# Or deploy app + persistent PostgreSQL
+oc create -f nodejs-ex/openshift/templates/nodejs-postgresql-persistent.json
+oc new-app nodejs-example \
+  -p SOURCE_REPOSITORY_URL=https://github.com/Sohruti/openshift-source-to-image.git
+```
+
+### Deploy with Helm
+
+```bash
+helm install nodejs-example ./nodejs-ex/helm/nodejs \
+  --set source_repository_url=https://github.com/Sohruti/openshift-source-to-image.git
+```
+
+### Useful OpenShift Commands
+
+```bash
+oc get pods                    # List running pods
+oc get builds                  # List builds
+oc logs -f bc/source2image     # Watch build log
+oc logs -f dc/source2image     # Watch app logs
+oc get route                   # Get the app URL
+oc delete project my-s2i-app   # Delete the project
 ```
 
 ---
