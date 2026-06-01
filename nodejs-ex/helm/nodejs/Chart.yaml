@@ -1,0 +1,11 @@
+name: nodejs
+version: 1.0.0
+description: An example Node.js CRUD application deployed on OpenShift using Source-to-Image (S2I).
+keywords:
+- quickstart
+- nodejs
+- s2i
+- openshift
+home: https://github.com/your-username/source2image
+sources:
+- https://github.com/your-username/source2image
